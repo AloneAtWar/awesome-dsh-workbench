@@ -70,9 +70,27 @@ export async function runCopilotReview({ instructions, input, screenshots = [], 
         if (size > 16 * 1024 * 1024) return finish(new Error('Copilot 审核输出超限'))
         stdout += chunk.toString()
       })
-      child.stderr.resume() // Never print provider stderr or raw output: may contain prompt/credential data.
+      let stderrBuffer = ''
+      child.stderr.on('data', (chunk) => {
+        stderrBuffer += chunk.toString()
+        if (stderrBuffer.length > 32 * 1024) stderrBuffer = stderrBuffer.slice(-32 * 1024)
+      })
       child.on('error', () => finish(new Error('Copilot CLI 无法启动，审核未完成')))
-      child.on('close', (code) => finish(code === 0 ? undefined : new Error(`Copilot CLI 退出码 ${code}，审核未完成；不切换模型或兜底放行`)))
+      child.on('close', (code) => {
+        if (code === 0) return finish()
+        let detail = ''
+        if (/exceeds the model's prompt budget/i.test(stderrBuffer)) {
+          const match = stderrBuffer.match(/Request exceeds the model's prompt budget[^.\n]*/i)
+          detail = `（${match ? match[0] : '提示词超出模型 272k 预算'}）`
+        } else if (/401|unauthorized|bad credentials/i.test(stderrBuffer)) {
+          detail = '（Token 认证失败，请检查 MODELS_TOKEN）'
+        } else if (/403|forbidden/i.test(stderrBuffer)) {
+          detail = '（Token 权限不足或被组织策略拒绝）'
+        } else if (/429|rate limit/i.test(stderrBuffer)) {
+          detail = '（请求速率超限 429 Rate Limit）'
+        }
+        finish(new Error(`Copilot CLI 退出码 ${code}${detail}，审核未完成；不切换模型或兜底放行`))
+      })
       child.stdin.on('error', () => finish(new Error('Copilot 输入失败')))
       child.stdin.end(prompt)
     })

@@ -222,3 +222,63 @@ test('market policy distinguishes authorized configuration and ordinary bugs fro
   assert.match(CRITERIA.security,/未经授权/)
   assert.ok(!CRITERIA.disclosure.includes('费用'))
 })
+
+test('compacts auxiliary files and node_modules blocks while preserving inventory', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'compact-evidence-'))
+  try {
+    await fs.mkdir(path.join(directory, 'test'), { recursive: true })
+    await fs.mkdir(path.join(directory, 'src'), { recursive: true })
+    await fs.mkdir(path.join(directory, 'lib'), { recursive: true })
+    await fs.writeFile(path.join(directory, 'pnpm-lock.yaml'), 'lockfile content')
+    await fs.writeFile(path.join(directory, 'test', 'client.test.js'), 'describe("test", () => {})')
+    await fs.writeFile(path.join(directory, 'src', 'index.ts'), 'export const hello = "world"')
+    await fs.writeFile(path.join(directory, 'lib', 'index.js'), 'export const hello = "world"')
+    const bundledCode = [
+      'console.log("start")',
+      '//#region node_modules/zod/lib/index.mjs',
+      'const z = 1;',
+      '//#endregion',
+      'console.log("end")'
+    ].join('\n')
+    await fs.writeFile(path.join(directory, 'bundle.js'), bundledCode)
+
+    const evidence = await readEvidenceDirectory(directory, 'source')
+    assert.ok(evidence.inventory.includes('pnpm-lock.yaml'))
+    assert.ok(evidence.inventory.includes('test/client.test.js'))
+    assert.ok(evidence.inventory.includes('src/index.ts'))
+
+    const filePaths = evidence.files.map(f => f.file)
+    assert.ok(!filePaths.includes('source/pnpm-lock.yaml'))
+    assert.ok(!filePaths.includes('source/test/client.test.js'))
+    assert.ok(!filePaths.includes('source/lib/index.js'))
+    assert.ok(filePaths.includes('source/src/index.ts'))
+    assert.ok(filePaths.includes('source/bundle.js'))
+
+    const bundleFile = evidence.files.find(f => f.file === 'source/bundle.js')
+    assert.ok(bundleFile.text.includes('[折叠打包内嵌的第三方依赖 node_modules 模块]'))
+    assert.ok(!bundleFile.text.includes('const z = 1;'))
+  } finally { await fs.rm(directory, { recursive: true, force: true }) }
+})
+
+test('deduplicates artifact files identical to source files in prompt input while keeping full text for validation', async () => {
+  const bytes = await packageBytes()
+  let promptEvidence
+  const sha256 = crypto.createHash('sha256').update(bytes).digest('hex')
+  const result = await reviewSubmission({
+    record, generated: { ...generated, distribution: { type: 'github-release', url: 'https://github.com/owner/repo/releases/download/v1.2.3/pkg.tgz', sha256 } },
+    pull,
+    env: { COPILOT_GITHUB_TOKEN: 'test' },
+    fetchImpl: async () => new Response(bytes),
+    modelImpl: async (request) => {
+      promptEvidence = request.input.evidence
+      const v = verdict()
+      for (const item of v.criteria) item.evidence = [{ file: 'source/client.js', quote: 'business panel' }]
+      return v
+    }
+  })
+  assert.equal(result.passed, true)
+  const artifactClient = promptEvidence.find(e => e.file === 'artifact/client.js')
+  assert.ok(artifactClient)
+  assert.match(artifactClient.text, /该文件内容与 source\/client\.js 逐字完全一致/)
+})
+
