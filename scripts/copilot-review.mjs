@@ -79,6 +79,7 @@ export async function runCopilotReview({ instructions, input, screenshots = [], 
       child.on('close', (code) => {
         if (code === 0) return finish()
         let detail = ''
+        const sanitizedStderr = stderrBuffer.trim().replace(/gh[pousr]_[A-Za-z0-9_]+/g, '***')
         if (/exceeds the model's prompt budget/i.test(stderrBuffer)) {
           const match = stderrBuffer.match(/Request exceeds the model's prompt budget[^.\n]*/i)
           detail = `（${match ? match[0] : '提示词超出模型 272k 预算'}）`
@@ -88,7 +89,25 @@ export async function runCopilotReview({ instructions, input, screenshots = [], 
           detail = '（Token 权限不足或被组织策略拒绝）'
         } else if (/429|rate limit/i.test(stderrBuffer)) {
           detail = '（请求速率超限 429 Rate Limit）'
+        } else if (sanitizedStderr) {
+          const firstLine = sanitizedStderr.split('\n')[0].slice(0, 200)
+          detail = `（${firstLine}）`
+        } else if (stdout.trim()) {
+          for (const line of stdout.split('\n')) {
+            try {
+              const event = JSON.parse(line)
+              if (event.type === 'session.error' || event.type === 'result') {
+                const msg = event.data?.message || event.message || event.error
+                if (msg) {
+                  detail = `（${String(msg).slice(0, 200).replace(/gh[pousr]_[A-Za-z0-9_]+/g, '***')}）`
+                  break
+                }
+              }
+            } catch {}
+          }
         }
+        if (sanitizedStderr) console.error('[Copilot CLI stderr]:', sanitizedStderr)
+        if (stdout.trim() && code !== 0) console.error('[Copilot CLI stdout head]:', stdout.slice(0, 2000).replace(/gh[pousr]_[A-Za-z0-9_]+/g, '***'))
         finish(new Error(`Copilot CLI 退出码 ${code}${detail}，审核未完成；不切换模型或兜底放行`))
       })
       child.stdin.on('error', () => finish(new Error('Copilot 输入失败')))

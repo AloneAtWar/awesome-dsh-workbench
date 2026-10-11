@@ -205,17 +205,17 @@ export async function reviewSubmission({ record, generated, pull, fetchImpl = fe
     }
   })
 
-  // Budget guardian: ensure total prompt characters stay within Copilot's prompt budget (~250k tokens)
+  // Budget guardian: ensure total prompt characters stay well within Copilot's 272k prompt budget (~120k tokens)
   let totalChars = 0
   for (const item of promptEvidence) totalChars += item.text.length
-  if (totalChars > 750_000) {
-    const highPriority = /^(?:submission\/|.*\/(?:package\.json|cordis\.patch\.yml|README\.md|LICENSE|dsh\/.*|.*\.patch\.yml|docs\/.*))/i
+  if (totalChars > 400_000) {
+    const highPriority = /^(?:submission\/|.*\/(?:package\.json|cordis\.patch\.yml|README\.md|LICENSE|dsh\/.*|.*\.patch\.yml))/i
     for (const item of promptEvidence) {
-      if (totalChars <= 750_000) break
-      if (!highPriority.test(item.file) && item.text.length > 25_000) {
+      if (totalChars <= 400_000) break
+      if (!highPriority.test(item.file) && item.text.length > 15_000) {
         const lines = item.text.split('\n')
         if (lines.length > 150) {
-          const truncated = [...lines.slice(0, 120), `[L121] // [次要辅助代码文件较大，已保留入口前 120 行以符合模型 272k 预算，完整代码请参阅仓库清单]`].join('\n')
+          const truncated = [...lines.slice(0, 120), `[L121] // [该文件代码较长，已保留入口前 120 行以符合模型 272k 预算，完整代码请参阅仓库清单]`].join('\n')
           totalChars -= (item.text.length - truncated.length)
           item.text = truncated
         }

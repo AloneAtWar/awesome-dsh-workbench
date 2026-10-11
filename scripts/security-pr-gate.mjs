@@ -45,6 +45,7 @@ export async function runSecurityGate({ env = process.env, fetchImpl = fetch, ga
     }
   } catch (error) {
     // Never output API bodies, full source or raw model text.
+    console.error('[security-pr-gate error]:', error.message)
     summary = `安全审核未完成或失败，禁止视为通过。${escape(error.message).slice(0, 1000)}`
   }
   await api(`/check-runs/${check.id}`, 'PATCH', { status: 'completed', conclusion,
@@ -53,9 +54,15 @@ export async function runSecurityGate({ env = process.env, fetchImpl = fetch, ga
   const publish = conclusion === 'success' && report?.passed === true
   if (env.GITHUB_OUTPUT) await fs.appendFile(env.GITHUB_OUTPUT, `publish=${publish}\n`)
   if (publish && env.SECURITY_BRIEF_FILE) await fs.writeFile(env.SECURITY_BRIEF_FILE, JSON.stringify({ repository, number, sha, body: current.body || '', record, evidenceDigest: report.evidenceDigest, model: MODEL }), { mode: 0o600 })
-  return { failed: conclusion !== 'success', report }
+  return { failed: conclusion !== 'success', report, summary }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  try { if ((await runSecurityGate()).failed) process.exitCode = 1 }
+  try {
+    const res = await runSecurityGate()
+    if (res.failed) {
+      if (res.summary) console.error(res.summary)
+      process.exitCode = 1
+    }
+  }
   catch (error) { console.error(error.message); process.exitCode = 1 }
 }
