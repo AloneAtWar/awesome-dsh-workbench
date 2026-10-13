@@ -165,7 +165,15 @@ export function mergeBatchReviews(reports) {
     if (items.some(item => !item)) throw new Error('分块审核项不完整')
     return items.find(item => item.status === 'fail') || items.find(item => item.status === 'needs_human') || items[0]
   })
-  return { summary: `完整审核 ${reports.length} 个材料分块。${reports[0].summary}`, criteria, passed: reports.every(report => report.passed) }
+  return { summary: `汇总 ${reports.length} 个已完成材料分块。${reports[0].summary}`, criteria, passed: reports.every(report => report.passed) }
+}
+
+export function collectReviewWave(results) {
+  const reports = results.filter(item => item.status === 'fulfilled').map(item => item.value)
+  if (reports.some(report => !report.passed)) return reports
+  const failed = results.find(item => item.status === 'rejected')
+  if (failed) throw failed.reason
+  return reports
 }
 
 export async function reviewSubmission({ record, generated, pull, fetchImpl = fetch, env = process.env, modelImpl = runCopilotReview }) {
@@ -224,7 +232,7 @@ export async function reviewSubmission({ record, generated, pull, fetchImpl = fe
   // Bounded parallelism keeps large releases within the job timeout. Every batch
   // must complete and validate; an error never becomes a passing partial review.
   for (let offset = 0; offset < batches.length; offset += 3) {
-    reports.push(...await Promise.all(batches.slice(offset, offset + 3).map(async (batch, index) => {
+    reports.push(...collectReviewWave(await Promise.allSettled(batches.slice(offset, offset + 3).map(async (batch, index) => {
       const batchNumber = offset + index + 1
       const started = Date.now()
       console.log(`[review batch ${batchNumber}/${batches.length}] started`)
@@ -257,9 +265,15 @@ export async function reviewSubmission({ record, generated, pull, fetchImpl = fe
     if (blocking.some(id => corrected.criteria.find(item => item.id === id)?.status === 'pass')) throw new Error('引用纠正不能自动撤销原报告的阻断项，需重新审核')
   }
       console.log(`[review batch ${batchNumber}/${batches.length}] completed in ${Math.round((Date.now() - started) / 1000)}s; passed=${reviewed.passed}`)
+      if (!reviewed.passed) {
+        console.error(`[review batch ${batchNumber}/${batches.length}] blocking criteria: ${reviewed.criteria.filter(item => item.status !== 'pass').map(item => `${item.id}:${item.status}`).join(',')}`)
+        if (env.SECURITY_BRIEF_FILE) await fs.writeFile(`${env.SECURITY_BRIEF_FILE}.batch-${batchNumber}.json`, JSON.stringify({ batchNumber, batchCount: batches.length, sourceCommit: generated.sourceCommit, prHead: pull.head.sha, evidenceDigest: digest, report: reviewed }), {mode:0o600})
+      }
       return reviewed
-    })))
+    }))))
+    if (reports.some(report => !report.passed)) break
   }
   const reviewed = mergeBatchReviews(reports)
+  reviewed.summary = `已完成 ${reports.length}/${batches.length} 块；${reports.length < batches.length ? '已发现阻断，后续材料未审查。' : '全部材料已审核。'}${reviewed.summary}`
   return { ...reviewed, limitations: REVIEW_LIMITATIONS, model: MODEL, evidenceDigest: digest, standardsDigest: crypto.createHash('sha256').update(JSON.stringify(standards)).digest('hex'), sourceCommit: generated.sourceCommit, distribution: generated.distribution }
 }

@@ -50,6 +50,14 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/security-pr-gate.mjs
+      - name: Preserve validated blocking review reports
+        if: always() && steps.classify.outputs.review == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: blocking-review-${{ github.event.pull_request.number }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/workbench-brief.json.batch-*.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Merge reviewed submission and announce to Feishu
         if: steps.security.outputs.publish == 'true'
         env:
