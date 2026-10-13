@@ -6,18 +6,54 @@ import path from 'node:path'
 export const COPILOT_VERSION = '1.0.94'
 export const MODEL = 'gpt-6-luna'
 
+// Consume every byte of the JSON event stream. The CLI may emit adjacent
+// objects without a newline; no banners, garbage or incomplete objects are ignored.
+export function splitCopilotEvents(output) {
+  const events = []
+  let start = -1, quoted = false, escaped = false
+  const stack = []
+  for (let index = 0; index < output.length; index++) {
+    const char = output[index]
+    if (start < 0) {
+      if (/[ \t\r\n]/.test(char)) continue
+      if (char !== '{') throw new Error(`Copilot 事件流包含未消费的非 JSON 内容，审核未完成（位置 ${index}，字符码 ${char.charCodeAt(0)}）`)
+      start = index; stack.push('{'); continue
+    }
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') quoted = false
+      continue
+    }
+    if (char === '"') quoted = true
+    else if (char === '{' || char === '[') stack.push(char)
+    else if (char === '}' || char === ']') {
+      if (stack.pop() !== (char === '}' ? '{' : '[')) throw new Error('Copilot JSON 事件结构损坏，审核未完成')
+      if (!stack.length) { events.push(output.slice(start, index + 1)); start = -1 }
+    }
+  }
+  if (start >= 0 || quoted || stack.length) throw new Error('Copilot JSON 事件未闭合，审核未完成')
+  return events
+}
+
 export function parseCopilotOutput(output) {
   let content, completed = false
-  for (const [index, line] of output.split('\n').entries()) {
+  for (const [index, line] of splitCopilotEvents(output).entries()) {
     if (!line.trim()) continue
     let event
     try { event = JSON.parse(line) } catch (parseError) {
       // Report structure only; stdout may contain untrusted source or secrets.
       const kind = /[\u001b\u0000-\u0008]/.test(line) ? 'control-text' : /^\s*[\[{]/.test(line) ? 'json-looking' : 'plain-text'
-      const category = /429|rate.?limit|quota/i.test(line) ? 'RATE_LIMIT' : /prompt.*budget|context.*(?:limit|length)/i.test(line) ? 'CONTEXT_LIMIT' : /401|unauthorized|authentication/i.test(line) ? 'AUTH' : /403|forbidden/i.test(line) ? 'PERMISSION' : /timeout|timed out/i.test(line) ? 'TIMEOUT' : 'UNKNOWN'
+      const category = kind === 'json-looking' ? 'JSON_SYNTAX' : /429|rate.?limit|quota/i.test(line) ? 'RATE_LIMIT' : /prompt.*budget|context.*(?:limit|length)/i.test(line) ? 'CONTEXT_LIMIT' : /401|unauthorized|authentication/i.test(line) ? 'AUTH' : /403|forbidden/i.test(line) ? 'PERMISSION' : /timeout|timed out/i.test(line) ? 'TIMEOUT' : 'UNKNOWN'
       const offset = parseError.message.match(/position (\d+)/)?.[1] || 'unknown'
-      const eventType = /^\s*\{\s*"type"\s*:\s*"(assistant\.message|result|session\.(?:start|error|shutdown|mcp_servers_loaded))"/.exec(line)?.[1] || 'unknown'
-      const error = new Error(`Copilot 返回非 JSON 事件，审核未完成（行 ${index + 1}，长度 ${line.length}，类别 ${kind}，错误分类 ${category}，JSON位置 ${offset}，事件 ${eventType}）`)
+      const eventType = /"type"\s*:\s*"(assistant\.message|user\.message|result|session\.(?:start|error|shutdown|mcp_servers_loaded))"/.exec(line.slice(0, Number(offset) || 256))?.[1] || 'unknown'
+      const parseKind = /Unexpected non-whitespace character after JSON/.test(parseError.message) ? 'TRAILING_CONTENT' : /control character/.test(parseError.message) ? 'CONTROL_CHARACTER' : /Unterminated string/.test(parseError.message) ? 'UNTERMINATED_STRING' : 'INVALID_JSON'
+      const offsetCode = offset !== 'unknown' ? line.charCodeAt(Number(offset)) : -1
+      let prefixEvent = 'not-valid'
+      if (offset !== 'unknown') {
+        try { const prefix = JSON.parse(line.slice(0, Number(offset))); prefixEvent = ['assistant.message', 'user.message', 'result', 'session.start', 'session.error'].includes(prefix.type) ? prefix.type : 'valid-unknown-type' } catch {}
+      }
+      const error = new Error(`Copilot 返回非 JSON 事件，审核未完成（行 ${index + 1}，长度 ${line.length}，类别 ${kind}，错误分类 ${category}，JSON位置 ${offset}，事件 ${eventType}，语法 ${parseKind}，位置字符码 ${offsetCode}，前缀事件 ${prefixEvent}）`)
       error.code = 'COPILOT_NON_JSON_EVENT'
       throw error
     }

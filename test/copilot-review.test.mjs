@@ -67,9 +67,19 @@ test('missing PAT and nonzero CLI exit never fall back to another model', async 
 
 test('non-JSON diagnostic exposes only structure, never source or credential text', () => {
   assert.throws(() => parseCopilotOutput('private-token-secret\n'), (error) => {
-    assert.equal(error.code, 'COPILOT_NON_JSON_EVENT')
-    assert.match(error.message, /行 1.*长度 20.*plain-text/)
+    assert.match(error.message, /未消费/)
     assert.ok(!error.message.includes('private-token-secret'))
     return true
   })
+})
+
+
+test('strict event stream supports adjacent objects while rejecting garbage and broken fragments', () => {
+ const ndjson=output()
+ assert.deepEqual(parseCopilotOutput(ndjson.replace(/\n/g,'')),parseCopilotOutput(ndjson))
+ for(const malformed of [ndjson+'garbage',ndjson+'{"type":', '[{}]', '{"type":"result",]']) assert.throws(()=>parseCopilotOutput(malformed))
+ const escaped=output([{type:'assistant.message',data:{model:MODEL,phase:'commentary',content:'braces {} [] quote \" and slash \\',toolRequests:[]}}]).replace(/\n/g,'')
+ assert.deepEqual(parseCopilotOutput(escaped),parseCopilotOutput(ndjson))
+ const tool=JSON.stringify({type:'tool.execution_start'})
+ assert.throws(()=>parseCopilotOutput(ndjson.replace(/\n/g,'')+tool),/工具调用/)
 })
