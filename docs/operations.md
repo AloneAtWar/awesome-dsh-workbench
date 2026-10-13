@@ -18,8 +18,10 @@
 | --- | --- |
 | Catalog CI | 所有 PR 和 main push：离线 Schema/example、测试和投稿范围 |
 | Trusted catalog PR gate | `pull_request_target` 为每个 PR 触发可信 main 作业；通过 API 从作者 fork 只读 YAML，检查来源和截图，作业结论直接作为必需检查 |
-| Publish workbench index | main push / 手动：完整探测及索引 Schema 校验，生成 `data/index.json`，上传 `data/` 并部署 Pages |
+| Publish workbench index | main push / 手动 / 审核机器人合并后显式 workflow_dispatch：完整探测及索引 Schema 校验，生成 `data/index.json`，上传 `data/` 并部署 Pages |
 | 同一构建的每日 schedule | 重新解析 npm → Release → 源码并检查截图，全部成功后刷新 Pages 索引 |
+
+审核机器人确认已审核 PR 合并后，用 `actions: write` 权限显式触发 `build-catalog.yml` 的 `workflow_dispatch`（main）。`GITHUB_TOKEN` 合并产生的 push 不会触发其他工作流，不能依赖 push 发布。触发失败时审核作业失败且不发送上新通知；重跑会确认既有合并结果并重新触发。触发成功只表示任务已提交，仍须核对发布运行与线上索引。
 
 维护者订阅该仓库 Actions 失败通知。定期更新的失败在运行记录中可见；目前不自动给作者发消息，也不自动下架。处理时区分网络/限流与确定性失效，确认后通过 PR 修复或下架。
 
