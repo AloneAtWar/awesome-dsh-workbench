@@ -6,13 +6,14 @@ import path from 'node:path'
 import {publish,buildBrief,latestChecks} from '../scripts/publish-reviewed-workbench.mjs'
 
 const brief={repository:'owner/repo',number:'32',sha:'c'.repeat(40),body:'reviewed',model:'gpt-6-luna',evidenceDigest:'digest',record:{name:'更新追踪',description:{zh:'每日变化日报'},url:'https://github.com/owner/project'}}
-async function scenario(t,{failed=false,changed=false,duplicate=false,feishuFailure=false}={}){
+async function scenario(t,{failed=false,changed=false,duplicate=false,feishuFailure=false,dispatchFailure=false,alreadyMerged=false}={}){
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'brief-test-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}))
  const file=path.join(dir,'brief.json');await fs.writeFile(file,JSON.stringify(brief))
  const env={SECURITY_BRIEF_FILE:file,REPOSITORY:brief.repository,PR_NUMBER:'32',CANDIDATE_SHA:brief.sha,GITHUB_TOKEN:'test',FEISHU_WORKBENCH_WEBHOOK:'https://open.feishu.cn/open-apis/bot/v2/hook/00000000-0000-0000-0000-000000000000'}
- let merged=false;const events=[]
+ let merged=alreadyMerged;const events=[]
  const fetchImpl=async(url,opts)=>{
   if(url.startsWith('https://open.feishu.cn/')) {events.push('notify');return Response.json({code:feishuFailure?19001:0})}
+  if(url.endsWith('/actions/workflows/build-catalog.yml/dispatches')) {assert.equal(merged,true);assert.deepEqual(JSON.parse(opts.body),{ref:'main'});events.push('dispatch');return new Response(null,{status:dispatchFailure?403:204})}
   if(opts.method==='POST'){events.push('receipt');return Response.json({})}
   if(url.includes('/pulls/'))return Response.json({state:'open',head:{sha:brief.sha},body:changed?'changed':brief.body,merged})
   const check_runs=['validate','Trusted catalog probe','Workbench security review'].map(name=>({name,status:'completed',conclusion:failed?'failure':'success'}))
@@ -22,13 +23,18 @@ async function scenario(t,{failed=false,changed=false,duplicate=false,feishuFail
  return {env,fetchImpl,events,merge:async(repo,number,sha)=>{assert.equal(sha,brief.sha);events.push('merge');merged=true}}
 }
 test('brief includes factual description and does not claim full security certification',()=>{assert.match(buildBrief(brief),/每日变化日报/);assert.match(buildBrief(brief),/未验证 Desktop/)} )
-test('merge confirmed before webhook, record success only after delivery',async t=>{const s=await scenario(t);await publish(s);assert.deepEqual(s.events,['merge','notify','receipt'])})
+test('merge confirmed before webhook, record success only after delivery',async t=>{const s=await scenario(t);await publish(s);assert.deepEqual(s.events,['merge','dispatch','notify','receipt'])})
 test('failed checks or stale reviewed body prohibit merge and notification',async t=>{for(const options of [{failed:true},{changed:true}]){const s=await scenario(t,options);await assert.rejects(publish(s));assert.deepEqual(s.events,[])}})
 test('same snapshot successful receipt skips duplicate sends',async t=>{const s=await scenario(t,{duplicate:true});await publish(s);assert.deepEqual(s.events,[])})
-test('Feishu application error fails delivery and does not record success',async t=>{const s=await scenario(t,{feishuFailure:true});await assert.rejects(publish(s),/未确认/);assert.deepEqual(s.events,['merge','notify'])})
+test('Feishu application error fails delivery and does not record success',async t=>{const s=await scenario(t,{feishuFailure:true});await assert.rejects(publish(s),/未确认/);assert.deepEqual(s.events,['merge','dispatch','notify'])})
 
 test('publication uses newest checks and ignores historical reviewer wrappers',()=>{
   const checks=latestChecks([{id:1,name:'validate',status:'completed',conclusion:'failure'},{id:2,name:'validate',status:'completed',conclusion:'success'},{id:3,name:'Run trusted security reviewer',status:'completed',conclusion:'failure'}])
   assert.equal(checks.length,1);assert.equal(checks[0].conclusion,'success')
   assert.equal(latestChecks([{id:1,name:'validate',conclusion:'success'},{id:2,name:'validate',conclusion:'failure'}])[0].conclusion,'failure')
 })
+
+test('dispatch failure stops notification and remains retryable after merge',async t=>{const s=await scenario(t,{dispatchFailure:true});await assert.rejects(publish(s),/403/);assert.deepEqual(s.events,['merge','dispatch'])})
+test('retry of an already merged submission dispatches publication before notifying',async t=>{const s=await scenario(t,{alreadyMerged:true});await publish(s);assert.deepEqual(s.events,['dispatch','notify','receipt'])})
+
+test('review workflow grants Actions write for explicit catalog dispatch',async()=>{const workflow=await fs.readFile(new URL('../.github/workflows/security-review.yml',import.meta.url),'utf8');assert.match(workflow,/^  actions: write$/m)})

@@ -8,6 +8,7 @@ permissions:
   pull-requests: write
   issues: write
   checks: write
+  actions: write
 concurrency:
   group: workbench-security-${{ github.event.pull_request.number }}
   cancel-in-progress: false # complete an explicit head-bound check even when superseded

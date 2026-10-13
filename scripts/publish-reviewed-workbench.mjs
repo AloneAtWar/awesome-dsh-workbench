@@ -24,7 +24,7 @@ export async function publish({env = process.env, fetchImpl = fetch, merge = (re
   const api = async (endpoint, method = 'GET', payload) => {
     const response = await fetchImpl(`https://api.github.com/repos/${repo}${endpoint}`, {method, ...(payload ? {body:JSON.stringify(payload)} : {}), headers:{'Content-Type':'application/json',Authorization:`Bearer ${env.GITHUB_TOKEN}`,Accept:'application/vnd.github+json'},signal:AbortSignal.timeout(30000)})
     if (!response.ok) throw new Error(`发布检查 API 返回 ${response.status}`)
-    return response.json()
+    return response.status === 204 ? undefined : response.json()
   }
   const notificationId = `feishu:${sha}:${brief.evidenceDigest}`
   let ready = false
@@ -51,6 +51,10 @@ export async function publish({env = process.env, fetchImpl = fetch, merge = (re
   }
   const merged = await api(`/pulls/${number}`)
   if (!merged.merged || merged.head.sha !== sha) throw new Error('无法确认已审核投稿的合并结果')
+  // GITHUB_TOKEN merges do not trigger push workflows. Dispatch explicitly
+  // after confirming the reviewed head was merged, including on retries.
+  await api('/actions/workflows/build-catalog.yml/dispatches', 'POST', {ref:'main'})
+  console.log('已触发市场目录发布；市场可见性以发布工作流及线上索引为准')
   const response = await fetchImpl(webhook.href, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msg_type:'text',content:{text:buildBrief(brief)}}),signal:AbortSignal.timeout(30000)})
   if (!response.ok) throw new Error(`飞书通知返回 HTTP ${response.status}；PR 已合并，请检查通知`)
   const result = await response.json()
