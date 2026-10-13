@@ -225,6 +225,9 @@ export async function reviewSubmission({ record, generated, pull, fetchImpl = fe
   // must complete and validate; an error never becomes a passing partial review.
   for (let offset = 0; offset < batches.length; offset += 3) {
     reports.push(...await Promise.all(batches.slice(offset, offset + 3).map(async (batch, index) => {
+      const batchNumber = offset + index + 1
+      const started = Date.now()
+      console.log(`[review batch ${batchNumber}/${batches.length}] started`)
       const batchEvidence = batch.validation
       const batchInstructions = `${instructions}\n这是完整材料的分块静态审核 ${offset + index + 1}/${batches.length}。本块共享投稿、manifest、入口和说明上下文，但只对当前所给代码判断，不得声称已看过其他块。带 #chars= 的文件是原文件 UTF-16 字符区间切片（含相邻重叠），行号从切片第一行计数；引用必须使用切片名称。每块都将单独审核，任何阻断或未完成均阻止整体通过。`
   const request = { instructions: batchInstructions, input: {
@@ -235,7 +238,11 @@ export async function reviewSubmission({ record, generated, pull, fetchImpl = fe
   const callModel = async (value) => {
     const requestChars = value.instructions.length + JSON.stringify(REVIEW_SCHEMA).length + JSON.stringify(value.input).replace(/@/g, '\\u0040').length + 1000
     if (requestChars > 400_000) throw new Error('完整审核请求超出模型预算，未完成审核')
-    return modelImpl(value)
+    try { return await modelImpl(value) }
+    catch (error) {
+      console.error(`[review batch ${batchNumber}/${batches.length}] model transport failed; code=${error.code === 'COPILOT_NON_JSON_EVENT' ? error.code : 'MODEL_ERROR'}`)
+      throw error
+    }
   }
   const parsed = await callModel(request)
   let reviewed
@@ -249,6 +256,7 @@ export async function reviewSubmission({ record, generated, pull, fetchImpl = fe
     const blocking = parsed.criteria.filter(item => item.status !== 'pass').map(item => item.id)
     if (blocking.some(id => corrected.criteria.find(item => item.id === id)?.status === 'pass')) throw new Error('引用纠正不能自动撤销原报告的阻断项，需重新审核')
   }
+      console.log(`[review batch ${batchNumber}/${batches.length}] completed in ${Math.round((Date.now() - started) / 1000)}s; passed=${reviewed.passed}`)
       return reviewed
     })))
   }

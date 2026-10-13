@@ -64,3 +64,12 @@ test('missing PAT and nonzero CLI exit never fall back to another model', async 
   await assert.rejects(() => runCopilotReview({ ...mock, instructions: '', input: {}, schema: {}, env: { COPILOT_GITHUB_TOKEN: 'test' } }), /退出码 1/)
   assert.equal(mock.calls.length, 1)
 })
+
+test('non-JSON diagnostic exposes only structure, never source or credential text', () => {
+  assert.throws(() => parseCopilotOutput('private-token-secret\n'), (error) => {
+    assert.equal(error.code, 'COPILOT_NON_JSON_EVENT')
+    assert.match(error.message, /行 1.*长度 20.*plain-text/)
+    assert.ok(!error.message.includes('private-token-secret'))
+    return true
+  })
+})

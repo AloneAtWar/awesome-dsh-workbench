@@ -8,9 +8,16 @@ export const MODEL = 'gpt-6-luna'
 
 export function parseCopilotOutput(output) {
   let content, completed = false
-  for (const line of output.split('\n').filter((value) => value.trim())) {
+  for (const [index, line] of output.split('\n').entries()) {
+    if (!line.trim()) continue
     let event
-    try { event = JSON.parse(line) } catch { throw new Error('Copilot 返回非 JSON 事件，审核未完成') }
+    try { event = JSON.parse(line) } catch {
+      // Report structure only; stdout may contain untrusted source or secrets.
+      const kind = /[\u001b\u0000-\u0008]/.test(line) ? 'control-text' : /^\s*[\[{]/.test(line) ? 'json-looking' : 'plain-text'
+      const error = new Error(`Copilot 返回非 JSON 事件，审核未完成（行 ${index + 1}，长度 ${line.length}，类别 ${kind}）`)
+      error.code = 'COPILOT_NON_JSON_EVENT'
+      throw error
+    }
     if (event.data?.model && event.data.model !== MODEL) throw new Error('Copilot 未使用指定的 gpt-6-luna 模型')
     if (event.type === 'result') {
       if (event.exitCode !== 0) throw new Error('Copilot 返回非成功完成状态')
