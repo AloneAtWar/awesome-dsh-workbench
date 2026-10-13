@@ -5,7 +5,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import * as tar from 'tar'
 import test from 'node:test'
-import { CRITERIA, MARKET_RISK_POLICY, MODEL, validateReview, readEvidenceDirectory, reviewSubmission, createReviewBatches, mergeBatchReviews } from '../scripts/llm-review.mjs'
+import { CRITERIA, MARKET_RISK_POLICY, MODEL, validateReview, readEvidenceDirectory, reviewSubmission, createReviewBatches, mergeBatchReviews, collectReviewWave } from '../scripts/llm-review.mjs'
 import { runSecurityGate, CHECK_NAME } from '../scripts/security-pr-gate.mjs'
 import { runGate } from '../scripts/trusted-pr-gate.mjs'
 
@@ -324,4 +324,15 @@ test('each batch repeats global submission manifest and README context', () => {
  const batches=createReviewBatches(data)
  assert.ok(batches.length>1)
  for(const batch of batches) for(const item of context) assert.ok(batch.prompt.some(other=>other.file===item.file&&other.text===item.text))
+})
+
+
+test('a validated blocking wave survives a concurrent transport error without becoming a complete pass', () => {
+ const block=verdict();block.criteria[0].status='needs_human'
+ const blocked=validateReview(block,evidence)
+ const results=[{status:'fulfilled',value:blocked},{status:'rejected',reason:new Error('transport incomplete')}]
+ const reports=collectReviewWave(results)
+ assert.equal(reports.length,1); assert.deepEqual(reports[0].criteria[0].evidence,blocked.criteria[0].evidence)
+ assert.equal(mergeBatchReviews(reports).passed,false)
+ assert.throws(()=>collectReviewWave([{status:'fulfilled',value:validateReview(verdict(),evidence)},results[1]]), /transport incomplete/)
 })

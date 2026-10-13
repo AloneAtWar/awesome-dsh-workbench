@@ -11,11 +11,13 @@ export function parseCopilotOutput(output) {
   for (const [index, line] of output.split('\n').entries()) {
     if (!line.trim()) continue
     let event
-    try { event = JSON.parse(line) } catch {
+    try { event = JSON.parse(line) } catch (parseError) {
       // Report structure only; stdout may contain untrusted source or secrets.
       const kind = /[\u001b\u0000-\u0008]/.test(line) ? 'control-text' : /^\s*[\[{]/.test(line) ? 'json-looking' : 'plain-text'
       const category = /429|rate.?limit|quota/i.test(line) ? 'RATE_LIMIT' : /prompt.*budget|context.*(?:limit|length)/i.test(line) ? 'CONTEXT_LIMIT' : /401|unauthorized|authentication/i.test(line) ? 'AUTH' : /403|forbidden/i.test(line) ? 'PERMISSION' : /timeout|timed out/i.test(line) ? 'TIMEOUT' : 'UNKNOWN'
-      const error = new Error(`Copilot 返回非 JSON 事件，审核未完成（行 ${index + 1}，长度 ${line.length}，类别 ${kind}，错误分类 ${category}）`)
+      const offset = parseError.message.match(/position (\d+)/)?.[1] || 'unknown'
+      const eventType = /^\s*\{\s*"type"\s*:\s*"(assistant\.message|result|session\.(?:start|error|shutdown|mcp_servers_loaded))"/.exec(line)?.[1] || 'unknown'
+      const error = new Error(`Copilot 返回非 JSON 事件，审核未完成（行 ${index + 1}，长度 ${line.length}，类别 ${kind}，错误分类 ${category}，JSON位置 ${offset}，事件 ${eventType}）`)
       error.code = 'COPILOT_NON_JSON_EVENT'
       throw error
     }
