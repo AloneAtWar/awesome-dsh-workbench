@@ -13,9 +13,9 @@
 
 </div>
 
-![DSH Desktop 工作台市场：按分类浏览社区工作台，查看简介、作者与安装状态](docs/images/market-overview.jpg)
+![DSH Desktop 工作台市场：按分类浏览社区工作台，查看简介、作者与安装状态](docs/images/market-overview.png)
 
-<p align="center"><sub>DSH Desktop 工作台市场 · 2026-10-13 实拍</sub></p>
+<p align="center"><sub>DSH Desktop 工作台市场界面</sub></p>
 
 ## 找到适合你的工作台
 
