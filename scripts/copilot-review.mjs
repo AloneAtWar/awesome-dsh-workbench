@@ -14,7 +14,8 @@ export function parseCopilotOutput(output) {
     try { event = JSON.parse(line) } catch {
       // Report structure only; stdout may contain untrusted source or secrets.
       const kind = /[\u001b\u0000-\u0008]/.test(line) ? 'control-text' : /^\s*[\[{]/.test(line) ? 'json-looking' : 'plain-text'
-      const error = new Error(`Copilot 返回非 JSON 事件，审核未完成（行 ${index + 1}，长度 ${line.length}，类别 ${kind}）`)
+      const category = /429|rate.?limit|quota/i.test(line) ? 'RATE_LIMIT' : /prompt.*budget|context.*(?:limit|length)/i.test(line) ? 'CONTEXT_LIMIT' : /401|unauthorized|authentication/i.test(line) ? 'AUTH' : /403|forbidden/i.test(line) ? 'PERMISSION' : /timeout|timed out/i.test(line) ? 'TIMEOUT' : 'UNKNOWN'
+      const error = new Error(`Copilot 返回非 JSON 事件，审核未完成（行 ${index + 1}，长度 ${line.length}，类别 ${kind}，错误分类 ${category}）`)
       error.code = 'COPILOT_NON_JSON_EVENT'
       throw error
     }
