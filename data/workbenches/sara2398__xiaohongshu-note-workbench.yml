@@ -1,0 +1,10 @@
+url: https://github.com/sara2398/xiaohongshu-note-workbench
+name: 小红书笔记创作
+nameEn: Xiaohongshu Note Studio
+category: content
+description:
+  zh: 根据主题和素材生成小红书笔记的标题、正文与话题标签，并支持编辑、保存和复制定稿。
+  en: Turn topics and source material into Xiaohongshu note titles, body copy, and hashtags, with editing, local saving, and copy-ready drafts.
+screenshots:
+  - https://raw.githubusercontent.com/sara2398/xiaohongshu-note-workbench/main/docs/images/overview.png
+  - https://raw.githubusercontent.com/sara2398/xiaohongshu-note-workbench/main/docs/images/result.png
