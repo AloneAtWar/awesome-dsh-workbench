@@ -398,9 +398,18 @@ test('buildReviewComment creates actionable PR comment with blocking items on fa
   assert.ok(comment)
   assert.match(comment, /工作台安全与规范审查未通过/)
   assert.match(comment, /abcdef1/)
-  assert.match(comment, /阻断项（需修改）/)
+  assert.match(comment, /问题原因：/)
+  assert.match(comment, /解决问题建议：/)
   assert.match(comment, /缺少上游开源许可证声明/)
+  assert.match(comment, /THIRD-PARTY-NOTICES\.md/)
   assert.equal(buildReviewComment({ conclusion: 'success', report, sha: 'abcdef1' }), null)
+
+  const sizeComment = buildReviewComment({ conclusion: 'failure', summary: 'Release 包（上限 8 MiB） 超过 8388608 bytes', sha: '173aab2289ff' })
+  assert.ok(sizeComment)
+  assert.match(sizeComment, /问题原因：/)
+  assert.match(sizeComment, /解决问题建议：/)
+  assert.match(sizeComment, /8388608|8\s*MiB/)
+  assert.match(sizeComment, /tarball/)
 })
 
 
