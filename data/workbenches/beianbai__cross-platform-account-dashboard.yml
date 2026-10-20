@@ -6,6 +6,7 @@ description:
   zh: 在本地查看小红书、抖音、哔哩哔哩和 X 的账号指标，支持独立定时同步、每日趋势及可暂停续传的累计作品库。
   en: Monitor Xiaohongshu, Douyin, Bilibili and X accounts locally with per-platform schedules, daily trends and a cumulative work library with resumable sync.
 screenshots:
-  - https://raw.githubusercontent.com/beianbai/cross-platform-account-dashboard/main/assets/market-overview.png
-  - https://raw.githubusercontent.com/beianbai/cross-platform-account-dashboard/main/assets/market-detail.png
+  - https://raw.githubusercontent.com/beianbai/cross-platform-account-dashboard/main/assets/market-demo-overview.png
+  - https://raw.githubusercontent.com/beianbai/cross-platform-account-dashboard/main/assets/market-demo-detail.png
+  - https://raw.githubusercontent.com/beianbai/cross-platform-account-dashboard/main/assets/market-demo-connection.png
 tarball: https://github.com/beianbai/cross-platform-account-dashboard/releases/latest/download/cross-platform-account-dashboard.tgz
