@@ -7,6 +7,35 @@ import { reviewSubmission, MODEL } from './llm-review.mjs'
 
 export const CHECK_NAME = 'Workbench security review'
 const escape = (value) => String(value).replace(/[<>&`]/g, ' ').replace(/@/g, '＠')
+
+export function buildReviewComment({ conclusion, report, summary, sha }) {
+  if (conclusion === 'success') return null
+  const shortSha = sha ? `\`${sha.slice(0, 7)}\`` : ''
+  const lines = [
+    `### ❌ 工作台安全与规范审查未通过 ${shortSha ? `(${shortSha})` : ''}`,
+    '',
+    '本次自动安全审查未能通过，请参考以下改进意见进行调整：',
+    ''
+  ]
+  if (report?.summary) {
+    lines.push(`> **审核综述**：${escape(report.summary)}`, '')
+  }
+  if (report?.criteria) {
+    const blocking = report.criteria.filter((item) => item.status !== 'pass')
+    if (blocking.length) {
+      lines.push('#### 🚫 阻断项（需修改）：', '')
+      for (const item of blocking) {
+        lines.push(`- **\`${item.id}\`** (${item.status})：${escape(item.reason)}`)
+      }
+      lines.push('')
+    }
+  } else if (summary) {
+    lines.push(`- **未通过原因**：${summary}`, '')
+  }
+  lines.push('---', '💡 修改完成后推送到当前 PR 分支即可，系统将自动重新执行安全门禁。')
+  return lines.join('\n')
+}
+
 export async function runSecurityGate({ env = process.env, fetchImpl = fetch, gate = runGate, reviewer = reviewSubmission } = {}) {
   const { REPOSITORY: repository, CANDIDATE_SHA: sha, GITHUB_TOKEN: token, PR_NUMBER: number } = env
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository || '') || !/^[a-f0-9]{40}$/.test(sha || '') || !/^[1-9]\d*$/.test(number || '') || !token) throw new Error('缺少可信运行上下文')
@@ -50,6 +79,20 @@ export async function runSecurityGate({ env = process.env, fetchImpl = fetch, ga
   }
   await api(`/check-runs/${check.id}`, 'PATCH', { status: 'completed', conclusion,
     output: { title: conclusion === 'success' ? '安全门禁通过；等待目录 CI 与发布确认' : '安全门禁未通过', summary: summary.slice(0, 60000) } })
+  if (conclusion !== 'success') {
+    try {
+      const commentBody = buildReviewComment({ conclusion, report, summary, sha })
+      if (commentBody) {
+        const comments = await api(`/issues/${number}/comments?per_page=30`).catch(() => [])
+        const alreadyCommented = Array.isArray(comments) && comments.some((c) => c.body?.includes(sha.slice(0, 7)))
+        if (!alreadyCommented) {
+          await api(`/issues/${number}/comments`, 'POST', { body: commentBody })
+        }
+      }
+    } catch (commentError) {
+      console.error('[security-pr-gate comment error]:', commentError.message)
+    }
+  }
   if (env.GITHUB_STEP_SUMMARY) await fs.appendFile(env.GITHUB_STEP_SUMMARY, `${summary}\n`)
   const publish = conclusion === 'success' && report?.passed === true
   if (env.GITHUB_OUTPUT) await fs.appendFile(env.GITHUB_OUTPUT, `publish=${publish}\n`)

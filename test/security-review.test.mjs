@@ -6,7 +6,7 @@ import crypto from 'node:crypto'
 import * as tar from 'tar'
 import test from 'node:test'
 import { CRITERIA, MARKET_RISK_POLICY, MODEL, validateReview, readEvidenceDirectory, reviewSubmission, createReviewBatches, mergeBatchReviews, collectReviewWave } from '../scripts/llm-review.mjs'
-import { runSecurityGate, CHECK_NAME } from '../scripts/security-pr-gate.mjs'
+import { runSecurityGate, CHECK_NAME, buildReviewComment } from '../scripts/security-pr-gate.mjs'
 import { runGate } from '../scripts/trusted-pr-gate.mjs'
 
 const evidence = [{ file: 'source/client.js', text: 'register business panel' }]
@@ -25,6 +25,14 @@ function mockCheck({ updated = false } = {}) {
   return { writes, fetchImpl: async (url, options = {}) => {
     if (url.endsWith('/pulls/3')) { reads++; return json(updated && reads > 1 ? { ...pull, head: { sha: 'd'.repeat(40) } } : pull) }
     if (url.endsWith('/check-runs') || url.endsWith('/check-runs/12')) { writes.push(JSON.parse(options.body)); return json({ id: 12 }) }
+    if (url.includes('/issues/3/comments')) {
+      if (options.method === 'POST') {
+        const body = JSON.parse(options.body)
+        writes.push({ type: 'comment', ...body })
+        return json({ id: 99, ...body })
+      }
+      return json([])
+    }
     throw new Error(`Unexpected URL ${url}`)
   } }
 }
@@ -83,7 +91,11 @@ test('stale head, missing result and review/API failure never create a passing c
       return { type: 'submission', ...(mode !== 'missing' ? { review: { ...verdict(), passed: mode !== 'needs-human' } } : {}) }
     }
     assert.equal((await runSecurityGate({ env, ...mock, gate })).failed, true)
-    assert.equal(mock.writes.at(-1).conclusion, 'failure')
+    const checkPatch = mock.writes.find((w) => w.conclusion)
+    assert.equal(checkPatch.conclusion, 'failure')
+    const commentWrite = mock.writes.find((w) => w.type === 'comment')
+    assert.ok(commentWrite)
+    assert.match(commentWrite.body, /审查未通过/)
   }
 })
 
@@ -167,7 +179,7 @@ test('PR body change during review invalidates a passing verdict on the same hea
     return original(url, options)
   }
   assert.equal((await runSecurityGate({ env, ...mock, gate: async () => ({ type: 'submission', review: { ...verdict(), passed: true } }) })).failed, true)
-  assert.equal(mock.writes.at(-1).conclusion, 'failure')
+  assert.equal(mock.writes.find((w) => w.conclusion)?.conclusion, 'failure')
 })
 
 test('runtime acceptance is outside static CI criteria; harmless whitespace is accepted', () => {
@@ -355,3 +367,40 @@ test('invalid UTF-8 text is rejected before byte-identical deduplication', async
   await assert.rejects(()=>readEvidenceDirectory(root),/二进制/)
  } finally {await fs.rm(root,{recursive:true,force:true})}
 })
+
+test('validates citations using identicalFiles aliases across batches', () => {
+  const files = [
+    { file: 'source/cordis.patch.yml', text: 'insert: []' },
+    { file: 'artifact/cordis.patch.yml', text: 'insert: []' }
+  ]
+  const promptEvidence = files.map(e => ({ file: e.file, text: '[L1] ' + e.text }))
+  const batches = createReviewBatches(promptEvidence, files)
+  const v = verdict()
+  for (const item of v.criteria) item.evidence = [{ file: 'artifact/cordis.patch.yml', startLine: 1, endLine: 1 }]
+  assert.equal(validateReview(v, batches[0].validation).passed, true)
+})
+
+test('normalizes citations omitting #chars= slice suffix when unambiguously matching', () => {
+  const files = [
+    { file: 'source/client.js#chars=0-40000', text: 'console.log("hello")\n' }
+  ]
+  const v = verdict()
+  for (const item of v.criteria) item.evidence = [{ file: 'source/client.js', startLine: 1, endLine: 1 }]
+  assert.equal(validateReview(v, files).passed, true)
+  assert.equal(v.criteria[0].evidence[0].file, 'source/client.js#chars=0-40000')
+})
+
+test('buildReviewComment creates actionable PR comment with blocking items on failure', () => {
+  const report = verdict()
+  report.criteria[0].status = 'fail'
+  report.criteria[0].reason = '缺少上游开源许可证声明'
+  const comment = buildReviewComment({ conclusion: 'failure', report, sha: 'abcdef1234567890' })
+  assert.ok(comment)
+  assert.match(comment, /工作台安全与规范审查未通过/)
+  assert.match(comment, /abcdef1/)
+  assert.match(comment, /阻断项（需修改）/)
+  assert.match(comment, /缺少上游开源许可证声明/)
+  assert.equal(buildReviewComment({ conclusion: 'success', report, sha: 'abcdef1' }), null)
+})
+
+
