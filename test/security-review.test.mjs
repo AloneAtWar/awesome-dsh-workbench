@@ -324,11 +324,9 @@ test('any blocking chunk prevents aggregated approval; incomplete and transport 
 })
 
 
-test('unbounded batch count and shared context fail before any model request', () => {
+test('unbounded batch count fails before any model request', () => {
   const files=Array.from({length:161},(_,i)=>({file:`artifact/${i}.js`,text:`${i}`+'a'.repeat(190000)}))
   assert.throws(()=>createReviewBatches(files), /80 个分块/)
-  const context=Array.from({length:10},(_,i)=>({file:`submission/${i}`,text:`${i}`+'a'.repeat(20000)}))
-  assert.throws(()=>createReviewBatches(context), /共享审核上下文/)
 })
 
 
@@ -413,3 +411,19 @@ test('buildReviewComment creates actionable PR comment with blocking items on fa
 })
 
 
+
+test('shared context overflow is fully reviewed within existing batch budgets', () => {
+  const files = Array.from({ length: 12 }, (_, i) => ({
+    file: 'source/dsh/module-' + i + '.mjs',
+    text: '// module ' + i + '\n' + 'x'.repeat(20000)
+  }))
+  files.push({ file: 'artifact/dsh/module-0.mjs', text: files[0].text })
+  const prompt = files.map(item => ({ ...item, text: item.text.split('\n').map((line, i) => '[L' + (i + 1) + '] ' + line).join('\n') }))
+  const batches = createReviewBatches(prompt, files)
+  assert.ok(batches.length > 1)
+  for (const batch of batches) assert.ok(JSON.stringify(batch.prompt).length <= 150000)
+  for (const file of files) {
+    assert.ok(batches.some(batch => batch.validation.some(item => item.file === file.file && item.text === file.text)), file.file)
+    assert.ok(batches.some(batch => batch.prompt.some(item => item.identicalFiles.includes(file.file) && item.text === prompt.find(p => p.file === file.file).text)), file.file)
+  }
+})
