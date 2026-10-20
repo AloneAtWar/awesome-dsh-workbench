@@ -149,6 +149,7 @@ export function createReviewBatches(promptEvidence, evidence = promptEvidence) {
   const originals = new Map(evidence.map(item => [item.file, item.text]))
   const contextPattern = /^(?:submission\/.*|.*\/(?:package\.json|cordis\.patch\.yml|README\.md|LICENSE|dsh\/.*))$/i
   const context = [], pieces = []
+  let contextChars = 2 // JSON array brackets
   // Deduplicate only whole byte-identical text, never regions or package names.
   // Explicit aliases preserve source/install provenance; canonical references
   // still validate against the exact original text.
@@ -167,8 +168,11 @@ export function createReviewBatches(promptEvidence, evidence = promptEvidence) {
   for (const item of unique) {
     const original = originals.get(item.file)
     const validations = (item.identicalFiles || [item.file]).map(file => ({ file, text: original }))
-    if (contextPattern.test(item.file) && JSON.stringify(item).length < 30_000) {
-      context.push({ prompt: item, validation: validations }); continue
+    const contextCost = JSON.stringify(item).length + (context.length ? 1 : 0)
+    // Preserve every file: context overflow is reviewed as ordinary pieces.
+    // Reserve room for a complete 60k piece within the existing 150k budget.
+    if (contextPattern.test(item.file) && JSON.stringify(item).length < 30_000 && contextChars + contextCost <= 80_000) {
+      context.push({ prompt: item, validation: validations }); contextChars += contextCost; continue
     }
     if (JSON.stringify(item).length <= 60_000) {
       pieces.push({ prompt: item, validation: validations }); continue
