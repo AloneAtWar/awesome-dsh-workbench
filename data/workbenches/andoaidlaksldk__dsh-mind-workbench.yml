@@ -1,7 +1,7 @@
 ﻿# 源码归档为纯文本：白板前端构建产物与实拍截图均已移出 git 跟踪（截图托管在 screenshots 分支，前端由 npm pack 重新生成），
 # 安全门禁只下载 main 源码归档喂给 Copilot 评审，纯文本可避免二进制字节破坏其 JSON 事件流解析。
 # tarball 固定指向 v1.0.15 Release 的 dsh-mind-workbench.tgz（2.69 MiB，< 8 MiB 上限），避免 latest 漂移与解析抖动。
-# 内嵌画布基于第三方 simple-mind-map (MIT, wanglin2)：发布包内已含 THIRD-PARTY-NOTICES.md 并完整保留其 MIT 版权与许可文本（Copyright (c) 2021-2023 The MindMap Team）。
+# 许可：LICENSE 为干净的标准 MIT 模板（licensee 可识别）；内嵌画布 simple-mind-map (wanglin2, MIT) 的原始版权与许可文本完整保留在发布包 THIRD-PARTY-NOTICES.md。
 url: https://github.com/andoaidlaksldk/dsh-mind-workbench
 name: DSH 思维导图工作台
 nameEn: DSH Mind Workbench
