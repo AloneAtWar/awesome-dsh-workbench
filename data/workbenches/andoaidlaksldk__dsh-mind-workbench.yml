@@ -1,3 +1,4 @@
+# 源码归档已精简（白板前端构建产物不再入库，由 npm pack 重新生成），安全门禁的 Copilot 评审流不再因超大产物中断。
 url: https://github.com/andoaidlaksldk/dsh-mind-workbench
 name: DSH 思维导图工作台
 nameEn: DSH Mind Workbench
