@@ -1,5 +1,6 @@
 ﻿# 源码归档为纯文本：白板前端构建产物与实拍截图均已移出 git 跟踪（截图托管在 screenshots 分支，前端由 npm pack 重新生成），
 # 安全门禁只下载 main 源码归档喂给 Copilot 评审，纯文本可避免二进制字节破坏其 JSON 事件流解析。
+# tarball 固定指向 v1.0.15 Release 的 dsh-mind-workbench.tgz（2.69 MiB，< 8 MiB 上限），避免 latest 漂移与解析抖动。
 url: https://github.com/andoaidlaksldk/dsh-mind-workbench
 name: DSH 思维导图工作台
 nameEn: DSH Mind Workbench
@@ -10,4 +11,4 @@ description:
 screenshots:
   - https://raw.githubusercontent.com/andoaidlaksldk/dsh-mind-workbench/screenshots/docs/screenshots/overview.png
   - https://raw.githubusercontent.com/andoaidlaksldk/dsh-mind-workbench/screenshots/docs/screenshots/radial.png
-tarball: https://github.com/andoaidlaksldk/dsh-mind-workbench/releases/latest/download/dsh-mind-workbench.tgz
+tarball: https://github.com/andoaidlaksldk/dsh-mind-workbench/releases/download/v1.0.15/dsh-mind-workbench.tgz
