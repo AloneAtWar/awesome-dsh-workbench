@@ -11,6 +11,10 @@ import { readBounded } from './media-lib.mjs'
 
 export const REVIEW_LIMITATIONS = '本次仅执行静态材料审核。未验证 Desktop 安装、启动、交互、重启恢复、跨平台兼容、截图实拍与完整功能；这些项目不参与通过判定。'
 
+export const MAX_CONTEXT_SIZE = 500_000
+export const MAX_BATCH_SIZE = 1_000_000
+export const MAX_REQUEST_CHARS = 1_500_000
+
 export const MARKET_RISK_POLICY = '市场审核不是通用代码质量或漏洞审计。安全/数据项的 fail 或 needs_human 必须基于材料中明确存在的恶意载荷、凭据窃取、隐蔽外传、未经授权的越权访问、主动破坏用户数据或危险安装行为；未见确凿恶意证据时，不得基于假设、推测或静态材料无法穷举运行流程而判定 needs_human 或 fail，必须直接判定为 pass，仅在 reason 中做非阻断安全提示。用户明确配置的网址、模型及正常业务请求不因可配置能力本身而拒绝。缺少 DNS 绑定等防御写法、推测性利用链、异常恢复/保存逻辑等一般 bug、UI 可选业务图标与装饰缺失以及未披露模型费用等所有改进建议均仅作非阻断建议，绝对不作为阻塞项，可在 reason 或 summary 提示，状态仍按 pass 判定。通过宿主 ctx.llm 使用用户当前选择的模型属于已授权正常业务能力，不因宿主模型可能为云服务、缺少另行说明或对本地存储表述的歧义而阻断；披露项仅对作者新增的独立外部服务、特殊权限或明确隐蔽的数据去向按规范检查。可信 probe 已校验实际发布包的 package.json 及安装契约，不能以不存在的字段缺失否定通过的确定性检查；应先完整读取对应 manifest。此策略不豁免材料中明确存在的恶意或未经授权行为，也不豁免安装契约、身份或真实秘密检查。'
 
 export const CRITERIA = {
@@ -147,7 +151,7 @@ export function validateReview(result, evidence) {
 // sampling or dependency folding: installed dependency code is reviewed too.
 export function createReviewBatches(promptEvidence, evidence = promptEvidence) {
   const originals = new Map(evidence.map(item => [item.file, item.text]))
-  const contextPattern = /^(?:submission\/.*|.*\/(?:package\.json|cordis\.patch\.yml|README\.md|LICENSE|dsh\/.*))$/i
+  const contextPattern = /^(?:submission\/.*|.*\/(?:package\.json|cordis\.patch\.ya?ml|README(?:\.md)?|LICENSE(?:\.(?:md|txt))?|dsh\/(?:index\.[cm]?[jt]sx?|manifest\.json)))$/i
   const context = [], pieces = []
   // Deduplicate only whole byte-identical text, never regions or package names.
   // Explicit aliases preserve source/install provenance; canonical references
@@ -167,7 +171,7 @@ export function createReviewBatches(promptEvidence, evidence = promptEvidence) {
   for (const item of unique) {
     const original = originals.get(item.file)
     const validations = (item.identicalFiles || [item.file]).map(file => ({ file, text: original }))
-    if (contextPattern.test(item.file) && JSON.stringify(item).length < 30_000) {
+    if (contextPattern.test(item.file) && JSON.stringify(item).length < 50_000) {
       context.push({ prompt: item, validation: validations }); continue
     }
     if (JSON.stringify(item).length <= 60_000) {
@@ -186,13 +190,13 @@ export function createReviewBatches(promptEvidence, evidence = promptEvidence) {
     }
   }
   const baseSize = JSON.stringify(context.map(item => item.prompt)).length
-  if (baseSize > 100_000) throw new Error('共享审核上下文超出预算，需人工处理')
+  if (baseSize > MAX_CONTEXT_SIZE) throw new Error('共享审核上下文超出预算，需人工处理')
   const batches = []
   let current = [...context], size = baseSize
   for (const piece of pieces) {
     const cost = JSON.stringify(piece.prompt).length
-    if (baseSize + cost > 150_000) throw new Error('审核分块超出模型预算，需人工处理')
-    if (size + cost > 150_000) { batches.push(current); current = [...context]; size = baseSize }
+    if (baseSize + cost > MAX_BATCH_SIZE) throw new Error('审核分块超出模型预算，需人工处理')
+    if (size + cost > MAX_BATCH_SIZE) { batches.push(current); current = [...context]; size = baseSize }
     current.push(piece); size += cost
   }
   batches.push(current)
@@ -290,7 +294,7 @@ export async function reviewSubmission({ record, generated, pull, fetchImpl = fe
   }, screenshots, schema: REVIEW_SCHEMA, env }
   const callModel = async (value) => {
     const requestChars = value.instructions.length + JSON.stringify(REVIEW_SCHEMA).length + JSON.stringify(value.input).replace(/@/g, '\\u0040').length + 1000
-    if (requestChars > 230_000) throw new Error('完整审核请求超出模型预算，未完成审核')
+    if (requestChars > MAX_REQUEST_CHARS) throw new Error('完整审核请求超出模型预算，未完成审核')
     try { return await modelImpl(value) }
     catch (error) {
       console.error(`[review batch ${batchNumber}/${batches.length}] model transport failed; code=${error.code === 'COPILOT_NON_JSON_EVENT' ? error.code : 'MODEL_ERROR'}`)
