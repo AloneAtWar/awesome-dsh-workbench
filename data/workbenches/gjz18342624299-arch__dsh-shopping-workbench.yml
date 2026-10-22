@@ -6,5 +6,6 @@ description:
   zh: 汇总公开促销线索，结合购物需求生成平台与时间建议，管理购买安排，并支持原生对话和日历导出。
   en: Research public promotions, suggest shopping platforms and timing, organize purchase plans, and use native chat and calendar export.
 screenshots:
-  - https://raw.githubusercontent.com/gjz18342624299-arch/dsh-shopping-workbench/main/docs/screenshots/overview.png
+  - https://raw.githubusercontent.com/gjz18342624299-arch/dsh-shopping-workbench/main/docs/screenshots/overview-v0330.png
+  - https://raw.githubusercontent.com/gjz18342624299-arch/dsh-shopping-workbench/main/docs/screenshots/calendar-v0330.png
 tarball: https://github.com/gjz18342624299-arch/dsh-shopping-workbench/releases/latest/download/dsh-shopping-workbench.tgz
